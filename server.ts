@@ -482,20 +482,12 @@ try {
 // 3. User Authorization Registry (Backend Lists)
 const ALLOWED_ADMINS = [
   "vatsalpatel1720@gmail.com",
-  "vatsal.assetscout@gmail.com",
-  "admin@dsr.com",
-  "admin@company.com",
-  "shadowff2309@gmail.com"
+  
 ];
 
 const ALLOWED_USERS = [
-  "alex.rivera@company.com",
-  "employee@company.com",
-  "vatsalpatel1720@gmail.com",
   "vatsal.assetscout@gmail.com",
-  "admin@dsr.com",
-  "admin@company.com",
-  "shadowff2309@gmail.com"
+  
 ];
 
 // ==========================================
