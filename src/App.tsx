@@ -251,8 +251,13 @@ export default function App() {
         console.warn("Failed to fetch server auth config:", authErr);
       }
 
+      const syncHeaders: Record<string, string> = {};
+      if (sheetSettings?.spreadsheetId) {
+        syncHeaders["x-spreadsheet-id"] = sheetSettings.spreadsheetId;
+      }
+
       // 1. Fetch Consolidated Dynamic Filters & Spreadsheet configurations
-      const filterRes = await fetch("/api/filters");
+      const filterRes = await fetch("/api/filters", { headers: syncHeaders });
       if (filterRes.ok) {
         const filterData = await filterRes.json();
         if (filterData) {
@@ -277,7 +282,7 @@ export default function App() {
         }
       } else {
         // Fallback to individual projects fetch if not supported
-        const projRes = await fetch("/api/projects");
+        const projRes = await fetch("/api/projects", { headers: syncHeaders });
         if (projRes.ok) {
           const loadedProjects = await projRes.json();
           if (loadedProjects && Array.isArray(loadedProjects)) {
@@ -288,7 +293,7 @@ export default function App() {
       }
 
       // 2. Fetch Submissions (Logs)
-      const subRes = await fetch("/api/submissions");
+      const subRes = await fetch("/api/submissions", { headers: syncHeaders });
       if (subRes.ok) {
         const loadedEntries = await subRes.json();
         if (loadedEntries && Array.isArray(loadedEntries)) {
@@ -424,12 +429,31 @@ export default function App() {
     setIsLoggingIn(true);
 
     try {
+      // Validate with backend auth structure
+      const res = await fetch("/api/auth/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: emailLower })
+      });
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "Login attempt rejected. Email not authorized.");
+      }
+
+      const data = await res.json();
+      const actualRole = data.role as 'user' | 'admin';
+
+      if (role === 'admin' && actualRole !== 'admin') {
+        throw new Error("Access Denied: This email account is not registered as an Administrator.");
+      }
+
       // Save user to memory/state instantly
       registerLoggedInUser(emailLower);
       setCurrentUserEmail(emailLower);
-      setCurrentUserRole(role);
-      localStorage.setItem('dsr_logged_role', role);
-      setActiveTab(role === 'admin' ? 'dashboard' : 'submit');
+      setCurrentUserRole(actualRole);
+      localStorage.setItem('dsr_logged_role', actualRole);
+      setActiveTab(actualRole === 'admin' ? 'dashboard' : 'submit');
 
       // Attempt background backend synchronisation for active state updates without blocking login UI or crashing
       syncWithBackend().catch((err) => {
@@ -505,8 +529,10 @@ export default function App() {
         registerLoggedInUser(userEmail, result.user.displayName || undefined);
 
         setCurrentUserEmail(userEmail);
-        const isLoginAdmin = data.role === "admin";
-        setActiveTab(isLoginAdmin ? 'dashboard' : 'submit');
+        const actualRole = data.role as 'user' | 'admin';
+        setCurrentUserRole(actualRole);
+        localStorage.setItem('dsr_logged_role', actualRole);
+        setActiveTab(actualRole === "admin" ? 'dashboard' : 'submit');
 
         await syncWithBackend();
       }
@@ -544,11 +570,16 @@ export default function App() {
 
     // Async write to sheets via service account proxy
     try {
+      const appendHeaders: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (sheetSettings?.spreadsheetId) {
+        appendHeaders['x-spreadsheet-id'] = sheetSettings.spreadsheetId;
+      }
+
       await fetch('/api/submissions/append', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: appendHeaders,
         body: JSON.stringify({
           works: worksData,
           date,

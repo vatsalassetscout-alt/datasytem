@@ -2,6 +2,10 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
+import { JWT } from "google-auth-library";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const app = express();
 const PORT = 3000;
@@ -117,6 +121,339 @@ const defaultSubmissions = [
   }
 ];
 
+// ==========================================
+// GOOGLE SHEETS CORE SYNCHRONIZATION UTILITIES
+// ==========================================
+
+const getGoogleAccessToken = async (): Promise<string | null> => {
+  const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
+  let rawKey = process.env.GOOGLE_PRIVATE_KEY;
+
+  if (!email || !rawKey) {
+    console.log("⚠️ Google Service Account credentials not fully configured in env.");
+    return null;
+  }
+
+  try {
+    const privateKey = rawKey.replace(/\\n/g, '\n');
+    const jwt = new JWT({
+      email,
+      key: privateKey,
+      scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+    });
+
+    const tokenRes = await jwt.getAccessToken();
+    return tokenRes.token || null;
+  } catch (err) {
+    console.error("❌ Failed to authenticate Google Service Account JWT client:", err);
+    return null;
+  }
+};
+
+const ensureSheetExists = async (token: string, spreadsheetId: string, title: string) => {
+  try {
+    const checkUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}`;
+    const res = await fetch(checkUrl, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+
+    if (!res.ok) {
+      console.warn(`Could not verify google spreadsheet ID ${spreadsheetId}. Response status: ${res.status}`);
+      return;
+    }
+
+    const data: any = await res.json();
+    const sheets = data.sheets || [];
+    const exists = sheets.some((s: any) => s.properties && s.properties.title === title);
+
+    if (!exists) {
+      console.log(`Sheet "${title}" not found. Auto-creating sheet in spreadsheet ${spreadsheetId}...`);
+      const updateUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`;
+      const createRes = await fetch(updateUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          requests: [
+            {
+              addSheet: {
+                properties: { title }
+              }
+            }
+          ]
+        })
+      });
+      if (!createRes.ok) {
+        console.error(`Failed to create Sheet "${title}":`, await createRes.text());
+      }
+    }
+  } catch (err) {
+    console.error(`Error in ensureSheetExists for "${title}":`, err);
+  }
+};
+
+const fetchProjectsFromSheets = async (token: string, spreadsheetId: string): Promise<any[][]> => {
+  const sheetName = "Projects_Mapping";
+  const range = encodeURIComponent(`${sheetName}!A1:H200`);
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}`;
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Google Sheets fetch projects API returned ${res.status}: ${text}`);
+  }
+
+  const data: any = await res.json();
+  return data.values || [];
+};
+
+const seedProjectsToSheets = async (token: string, spreadsheetId: string) => {
+  await ensureSheetExists(token, spreadsheetId, "Projects_Mapping");
+  const headers = [
+    "Project ID", "Domain", "Project Name", "Project Code", "Location", "Region", "Assigned Users", "Description"
+  ];
+  const rows = [
+    headers,
+    ...defaultProjects.map(p => [
+      p.id,
+      p.domain,
+      p.name,
+      p.code,
+      p.location,
+      p.region,
+      p.users.join(', '),
+      p.description
+    ])
+  ];
+
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Projects_Mapping!A1")}?valueInputOption=USER_ENTERED`;
+  await fetch(url, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ values: rows })
+  });
+};
+
+const syncProjects = async (token: string, spreadsheetId: string) => {
+  try {
+    await ensureSheetExists(token, spreadsheetId, "Projects_Mapping");
+    let rows = await fetchProjectsFromSheets(token, spreadsheetId);
+    
+    if (rows.length <= 1) {
+      console.log("Projects sheet is empty, seeding defaults...");
+      await seedProjectsToSheets(token, spreadsheetId);
+      rows = await fetchProjectsFromSheets(token, spreadsheetId);
+    }
+
+    const mapped = rows.slice(1).map((row: any) => ({
+      id: row[0] || '',
+      domain: row[1] || '',
+      name: row[2] || '',
+      code: row[3] || '',
+      location: row[4] || 'Mumbai',
+      region: row[5] || 'West',
+      users: row[6] ? row[6].split(',').map((u: string) => u.trim().toLowerCase()) : [],
+      description: row[7] || ''
+    })).filter((p: any) => p.id && p.name);
+
+    fs.writeFileSync(PROJECTS_FALLBACK_FILE, JSON.stringify(mapped, null, 2));
+    return mapped;
+  } catch (err) {
+    console.error("❌ Error syncing projects from Google Sheets, using local cache:", err);
+    if (fs.existsSync(PROJECTS_FALLBACK_FILE)) {
+      return JSON.parse(fs.readFileSync(PROJECTS_FALLBACK_FILE, "utf-8"));
+    }
+    return defaultProjects;
+  }
+};
+
+const fetchSubmissionsFromSheets = async (token: string, spreadsheetId: string): Promise<any[][]> => {
+  const sheetName = "DSR_Logs";
+  await ensureSheetExists(token, spreadsheetId, sheetName);
+  const range = encodeURIComponent(`${sheetName}!A1:S2000`);
+  const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${range}`;
+
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json"
+    }
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Google Sheets fetch submissions API returned ${res.status}: ${text}`);
+  }
+
+  const data: any = await res.json();
+  return data.values || [];
+};
+
+const parseSubmissionsRows = (rows: string[][]): any[] => {
+  if (rows.length <= 1) {
+    return [];
+  }
+
+  const groupedEntries: Record<string, any> = {};
+
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row[0] || !row[1] || !row[2]) continue;
+
+    const subBlockId = row[0];
+    const dsrParentId = subBlockId.split('-').slice(0, 2).join('-');
+    const date = row[1];
+    const userEmail = row[2];
+    const projectId = row[3] || '';
+    const projectName = row[4] || '';
+    const listingCount = parseInt(row[5], 10) || 0;
+    const blogCount = parseInt(row[6], 10) || 0;
+    const pdfCount = parseInt(row[7], 10) || 0;
+    const imageCount = parseInt(row[8], 10) || 0;
+    const blogNarrative = row[9] || '';
+    
+    let customValues = {};
+    try {
+      if (row[10] && row[10].trim().startsWith('{')) {
+        customValues = JSON.parse(row[10]);
+      }
+    } catch (e) {
+      console.warn('Corrupted custom JSON:', row[10]);
+    }
+
+    const createdAt = row[11] || new Date().toISOString();
+    const workTypes = row[12] ? row[12].split(',').map((s: string) => s.trim()).filter(Boolean) : [];
+    const contentUpdates = row[13] ? row[13].split(',').map((s: string) => s.trim()).filter(Boolean) : [];
+    const workSummary = row[14] || '';
+    const forumCount = parseInt(row[15], 10) || 0;
+    const videoPptCount = parseInt(row[16], 10) || 0;
+    const profileCount = parseInt(row[17], 10) || 0;
+    const linkCount = parseInt(row[18], 10) || 0;
+
+    const workItem = {
+      id: subBlockId,
+      projectId,
+      projectName,
+      listingCount,
+      blogCount,
+      forumCount,
+      pdfCount,
+      imageCount,
+      videoPptCount,
+      profileCount,
+      linkCount,
+      blog: blogNarrative,
+      customValues,
+      workTypes,
+      contentUpdates,
+      workSummary
+    };
+
+    if (!groupedEntries[dsrParentId]) {
+      groupedEntries[dsrParentId] = {
+        id: dsrParentId,
+        date,
+        userEmail,
+        works: [],
+        createdAt
+      };
+    }
+    groupedEntries[dsrParentId].works.push(workItem);
+  }
+
+  return Object.values(groupedEntries).sort((a: any, b: any) => b.createdAt.localeCompare(a.createdAt));
+};
+
+const syncSubmissions = async (token: string, spreadsheetId: string) => {
+  try {
+    const rows = await fetchSubmissionsFromSheets(token, spreadsheetId);
+    
+    if (rows.length === 0) {
+      console.log("Headers empty, initializing DSR headers...");
+      const headers = [
+        'DSR ID', 'Reporting Date', 'User Email', 'Project ID', 'Project Name',
+        'Listing Count', 'Blog Count', 'PDF Count', 'Image Count', 'Work Narrative',
+        'Custom Values JSON', 'CreatedAt', 'Work Types', 'Content Updates', 'Work Summary',
+        'Forum Count', 'Video PPT Count', 'Profile Count', 'Link Count'
+      ];
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("DSR_Logs!A1")}?valueInputOption=USER_ENTERED`;
+      await fetch(url, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ values: [headers] })
+      });
+      return [];
+    }
+
+    const parsed = parseSubmissionsRows(rows);
+    fs.writeFileSync(SUBMISSIONS_FALLBACK_FILE, JSON.stringify(parsed, null, 2));
+    return parsed;
+  } catch (err) {
+    console.error("❌ Error syncing DSR submissions from Google Sheets, using local cache:", err);
+    if (fs.existsSync(SUBMISSIONS_FALLBACK_FILE)) {
+      return JSON.parse(fs.readFileSync(SUBMISSIONS_FALLBACK_FILE, "utf-8"));
+    }
+    return defaultSubmissions;
+  }
+};
+
+const writeAllProjectsToSheets = async (token: string, spreadsheetId: string, projectsList: any[]) => {
+  try {
+    await ensureSheetExists(token, spreadsheetId, "Projects_Mapping");
+    const headers = [
+      "Project ID", "Domain", "Project Name", "Project Code", "Location", "Region", "Assigned Users", "Description"
+    ];
+    const rows = [
+      headers,
+      ...projectsList.map(p => [
+        p.id,
+        p.domain,
+        p.name,
+        p.code,
+        p.location,
+        p.region,
+        (p.users || []).join(', '),
+        p.description
+      ])
+    ];
+
+    const clearUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Projects_Mapping!A1:H1000")}:clear`;
+    await fetch(clearUrl, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` }
+    });
+
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("Projects_Mapping!A1")}?valueInputOption=USER_ENTERED`;
+    await fetch(url, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({ values: rows })
+    });
+    console.log("Successfully synchronised all projects to Google Sheets.");
+  } catch (err) {
+    console.error("Failed writing projects to sheets:", err);
+  }
+};
+
 // Initialize dynamic local files on boot if empty
 try {
   if (!fs.existsSync(PROJECTS_FALLBACK_FILE)) {
@@ -196,30 +533,61 @@ app.post("/api/auth/verify", (req, res) => {
   });
 });
 
-// Config diagnostics status route - tells app connection is completely local & seamless
-app.get("/api/config-status", (req, res) => {
+const getSpreadsheetId = (req: any, type: 'projects' | 'logs'): string | null => {
+  const headerId = req.headers['x-spreadsheet-id'];
+  if (headerId && typeof headerId === 'string' && headerId.trim()) {
+    return headerId.trim();
+  }
+  const envId = type === 'projects' ? process.env.GOOGLE_PROJECTS_SPREADSHEET_ID : process.env.GOOGLE_LOGS_SPREADSHEET_ID;
+  if (envId && envId.trim()) {
+    return envId.trim();
+  }
+  return null;
+};
+
+// Config diagnostics status route
+app.get("/api/config-status", async (req, res) => {
+  const token = await getGoogleAccessToken();
+  const serviceAccountEmail = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "";
+  const projectsId = getSpreadsheetId(req, 'projects') || "Local fallback active";
+  const logsId = getSpreadsheetId(req, 'logs') || "Local fallback active";
+
   return res.json({
-    serviceAccountConfigured: true,
-    serviceAccountEmail: "Local-Disk-DB",
-    projectsSpreadsheetId: "Local-File-Engine",
-    logsSpreadsheetId: "Local-File-Engine",
-    fetchStatus: { ok: true, error: "" },
+    serviceAccountConfigured: !!token,
+    serviceAccountEmail: serviceAccountEmail || "None",
+    projectsSpreadsheetId: projectsId,
+    logsSpreadsheetId: logsId,
+    fetchStatus: { ok: !!token, error: token ? "" : "No token authorized" },
     databaseStatus: { ok: true, error: "" }
   });
 });
 
-// GET All Projects (Read fallback file directly)
-app.get("/api/projects", (req, res) => {
+// GET All Projects
+app.get("/api/projects", async (req, res) => {
   try {
+    const token = await getGoogleAccessToken();
+    const spreadsheetId = getSpreadsheetId(req, 'projects');
+
+    if (token && spreadsheetId) {
+      const list = await syncProjects(token, spreadsheetId);
+      return res.json(list);
+    }
+
     const list = JSON.parse(fs.readFileSync(PROJECTS_FALLBACK_FILE, "utf-8"));
     return res.json(list);
   } catch (err: any) {
-    return res.json(defaultProjects);
+    console.error("GET /api/projects error:", err);
+    try {
+      const list = JSON.parse(fs.readFileSync(PROJECTS_FALLBACK_FILE, "utf-8"));
+      return res.json(list);
+    } catch {
+      return res.json(defaultProjects);
+    }
   }
 });
 
 // ADD, EDIT, DELETE Projects
-app.post("/api/projects", (req, res) => {
+app.post("/api/projects", async (req, res) => {
   const { action, project } = req.body;
   try {
     let list = [];
@@ -242,6 +610,13 @@ app.post("/api/projects", (req, res) => {
     }
 
     fs.writeFileSync(PROJECTS_FALLBACK_FILE, JSON.stringify(list, null, 2));
+
+    const token = await getGoogleAccessToken();
+    const spreadsheetId = getSpreadsheetId(req, 'projects');
+    if (token && spreadsheetId) {
+      await writeAllProjectsToSheets(token, spreadsheetId, list);
+    }
+
     return res.json({ success: true, list });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
@@ -249,13 +624,20 @@ app.post("/api/projects", (req, res) => {
 });
 
 // GET filters combinations
-app.get("/api/filters", (req, res) => {
+app.get("/api/filters", async (req, res) => {
   try {
     let projectsArr = [];
-    try {
-      projectsArr = JSON.parse(fs.readFileSync(PROJECTS_FALLBACK_FILE, "utf-8"));
-    } catch {
-      projectsArr = [...defaultProjects];
+    const token = await getGoogleAccessToken();
+    const spreadsheetId = getSpreadsheetId(req, 'projects');
+
+    if (token && spreadsheetId) {
+      projectsArr = await syncProjects(token, spreadsheetId);
+    } else {
+      try {
+        projectsArr = JSON.parse(fs.readFileSync(PROJECTS_FALLBACK_FILE, "utf-8"));
+      } catch {
+        projectsArr = [...defaultProjects];
+      }
     }
 
     const uniqueLocations = new Set<string>();
@@ -271,10 +653,17 @@ app.get("/api/filters", (req, res) => {
     });
 
     let submissionsArr = [];
-    try {
-      submissionsArr = JSON.parse(fs.readFileSync(SUBMISSIONS_FALLBACK_FILE, "utf-8"));
-    } catch {
-      submissionsArr = [...defaultSubmissions];
+    const logsToken = await getGoogleAccessToken();
+    const logsSpreadsheetId = getSpreadsheetId(req, 'logs');
+
+    if (logsToken && logsSpreadsheetId) {
+      submissionsArr = await syncSubmissions(logsToken, logsSpreadsheetId);
+    } else {
+      try {
+        submissionsArr = JSON.parse(fs.readFileSync(SUBMISSIONS_FALLBACK_FILE, "utf-8"));
+      } catch {
+        submissionsArr = [...defaultSubmissions];
+      }
     }
 
     submissionsArr.forEach((entry: any) => {
@@ -283,7 +672,6 @@ app.get("/api/filters", (req, res) => {
       }
     });
 
-    // Make sure standard ones are there
     if (uniqueLocations.size === 0) {
       uniqueLocations.add("Mumbai");
       uniqueLocations.add("Delhi");
@@ -310,17 +698,31 @@ app.get("/api/filters", (req, res) => {
 });
 
 // GET Submissions Logs
-app.get("/api/submissions", (req, res) => {
+app.get("/api/submissions", async (req, res) => {
   try {
+    const token = await getGoogleAccessToken();
+    const spreadsheetId = getSpreadsheetId(req, 'logs');
+
+    if (token && spreadsheetId) {
+      const list = await syncSubmissions(token, spreadsheetId);
+      return res.json(list);
+    }
+
     const list = JSON.parse(fs.readFileSync(SUBMISSIONS_FALLBACK_FILE, "utf-8"));
     return res.json(list);
   } catch (err) {
-    return res.json(defaultSubmissions);
+    console.error("GET /api/submissions error:", err);
+    try {
+      const list = JSON.parse(fs.readFileSync(SUBMISSIONS_FALLBACK_FILE, "utf-8"));
+      return res.json(list);
+    } catch {
+      return res.json(defaultSubmissions);
+    }
   }
 });
 
-// POST Log DSR Submission (Append to local file database)
-app.post("/api/submissions/append", (req, res) => {
+// POST Log DSR Submission (Append to local file database and Google Sheets)
+app.post("/api/submissions/append", async (req, res) => {
   const { works, date, userEmail } = req.body;
   if (!userEmail || !works || !Array.isArray(works)) {
     return res.status(400).json({ error: "Missing required submission parameters." });
@@ -351,7 +753,56 @@ app.post("/api/submissions/append", (req, res) => {
     });
 
     fs.writeFileSync(SUBMISSIONS_FALLBACK_FILE, JSON.stringify(list, null, 2));
-    return res.json({ success: true, source: "Local File DB" });
+
+    const token = await getGoogleAccessToken();
+    const spreadsheetId = getSpreadsheetId(req, 'logs');
+
+    if (token && spreadsheetId) {
+      const sheetName = "DSR_Logs";
+      await ensureSheetExists(token, spreadsheetId, sheetName);
+
+      const rowsToWrite = works.map((work: any, index: number) => {
+        return [
+          `${submissionId}-${index}`,
+          date,
+          userEmail,
+          work.projectId,
+          work.projectName,
+          (work.listingCount || 0).toString(),
+          (work.blogCount || 0).toString(),
+          (work.pdfCount || 0).toString(),
+          (work.imageCount || 0).toString(),
+          work.blog || '',
+          JSON.stringify(work.customValues || {}),
+          createdAt,
+          (work.workTypes || []).join(', '),
+          (work.contentUpdates || []).join(', '),
+          work.workSummary || '',
+          (work.forumCount ?? 0).toString(),
+          (work.videoPptCount ?? 0).toString(),
+          (work.profileCount ?? 0).toString(),
+          (work.linkCount ?? 0).toString()
+        ];
+      });
+
+      const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent("DSR_Logs!A1")}:append?valueInputOption=USER_ENTERED`;
+      const sheetsAppendRes = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ values: rowsToWrite })
+      });
+
+      if (!sheetsAppendRes.ok) {
+        console.error("Failed appending to Google Sheets: status", sheetsAppendRes.status, await sheetsAppendRes.text());
+      } else {
+        console.log("Appended work rows to Google Sheets successfully.");
+      }
+    }
+
+    return res.json({ success: true, source: token && spreadsheetId ? "Google Sheets + Local Backup" : "Local File DB Only" });
   } catch (err: any) {
     return res.status(500).json({ error: err.message });
   }
