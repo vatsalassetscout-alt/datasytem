@@ -141,42 +141,6 @@ export default function LoginScreen({
             )}
           </form>
 
-          {/* Quick Access presets for testing */}
-          <div className="border-t border-gray-100 pt-5 space-y-3.5">
-            <span className="block text-[10px] font-bold text-gray-400 uppercase tracking-widest text-center">
-              Quick access demo presets
-            </span>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-              {/* Presets 1: Admin */}
-              <button
-                type="button"
-                onClick={() => handleQuickDemoFill(adminPresetEmail)}
-                className="p-3 text-left bg-indigo-50/50 hover:bg-indigo-50 border border-indigo-100/50 rounded-xl transition"
-              >
-                <div className="flex items-center gap-1.5 text-indigo-700 font-bold text-[10px]">
-                  <KeyRound size={12} /> Admin Preset
-                </div>
-                <div className="text-[10px] text-gray-705 font-mono mt-1 font-semibold truncate leading-none" title={adminPresetEmail}>
-                  {adminPresetEmail}
-                </div>
-              </button>
-
-              {/* Presets 2: Regular user */}
-              <button
-                type="button"
-                onClick={() => handleQuickDemoFill(userPresetEmail)}
-                className="p-3 text-left bg-slate-50 hover:bg-slate-100 border border-slate-200/50 rounded-xl transition"
-              >
-                <div className="flex items-center gap-1.5 text-gray-700 font-bold text-[10px]">
-                  <UserCheck size={12} /> Standard User
-                </div>
-                <div className="text-[10px] text-gray-705 font-mono mt-1 font-semibold truncate leading-none" title={userPresetEmail}>
-                  {userPresetEmail}
-                </div>
-              </button>
-            </div>
-          </div>
         </div>
 
         {/* Security / Sheets info indicator footer */}

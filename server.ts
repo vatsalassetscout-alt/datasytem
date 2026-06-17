@@ -70,20 +70,36 @@ function isValidSpreadsheetId(id?: string): boolean {
   const clean = id.trim();
   if (
     clean === "" ||
-    clean === "your-google-spreadsheet-id" ||
-    clean.includes("your-google-spreadsheet")
+    clean.toLowerCase() === "your-google-spreadsheet-id" ||
+    clean.toLowerCase().includes("your-google-spreadsheet") ||
+    clean.toLowerCase().includes("placeholder") ||
+    clean.toLowerCase().includes("spreadsheet") ||
+    clean.toUpperCase().includes("MY_") ||
+    clean.length < 20
   ) {
     return false;
   }
   return true;
 }
 
-function getSpreadsheetId(req: express.Request): string | undefined {
-  const headerId = req.headers["x-spreadsheet-id"];
-  if (typeof headerId === "string" && headerId.trim() !== "") {
-    return headerId.trim();
+function getProjectsSpreadsheetId(req?: express.Request): string | undefined {
+  if (req) {
+    const headerId = req.headers["x-projects-spreadsheet-id"] || req.headers["x-spreadsheet-id"];
+    if (typeof headerId === "string" && headerId.trim() !== "") {
+      return headerId.trim();
+    }
   }
-  return process.env.GOOGLE_SPREADSHEET_ID;
+  return process.env.GOOGLE_PROJECTS_SPREADSHEET_ID || process.env.GOOGLE_SPREADSHEET_ID;
+}
+
+function getLogsSpreadsheetId(req?: express.Request): string | undefined {
+  if (req) {
+    const headerId = req.headers["x-logs-spreadsheet-id"] || req.headers["x-spreadsheet-id"];
+    if (typeof headerId === "string" && headerId.trim() !== "") {
+      return headerId.trim();
+    }
+  }
+  return process.env.GOOGLE_LOGS_SPREADSHEET_ID || process.env.GOOGLE_SPREADSHEET_ID;
 }
 
 // Google Sheet Authentication check & helper
@@ -91,22 +107,31 @@ function getSheetsJWT() {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
   const privateKey = process.env.GOOGLE_PRIVATE_KEY;
 
+  if (!email || !privateKey) {
+    return null;
+  }
+
+  const emailClean = email.trim();
+  const keyClean = privateKey.trim();
+
   if (
-    !email ||
-    !privateKey ||
-    email.trim() === "" ||
-    email.includes("your-service-account") ||
-    privateKey.trim() === "" ||
-    privateKey.includes("-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----") ||
-    privateKey.includes("...")
+    emailClean === "" ||
+    emailClean.toLowerCase().includes("your-service-account") ||
+    emailClean.toLowerCase().includes("placeholder") ||
+    !emailClean.includes("@") ||
+    keyClean === "" ||
+    keyClean.toLowerCase().includes("your-private-key") ||
+    keyClean.toLowerCase().includes("placeholder") ||
+    keyClean.includes("...") ||
+    !keyClean.includes("-----BEGIN PRIVATE KEY-----")
   ) {
     return null;
   }
 
   try {
     return new JWT({
-      email: email.trim(),
-      key: privateKey.replace(/\\n/g, '\n').trim(),
+      email: emailClean,
+      key: keyClean.replace(/\\n/g, '\n').trim(),
       scopes: ['https://www.googleapis.com/auth/spreadsheets'],
     });
   } catch (err) {
@@ -283,12 +308,14 @@ app.post("/api/auth/verify", (req, res) => {
 app.get("/api/config-status", async (req, res) => {
   const email = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || "";
   const privateKey = process.env.GOOGLE_PRIVATE_KEY || "";
-  const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID || "";
+  const projectsSpreadsheetId = getProjectsSpreadsheetId(req) || "";
+  const logsSpreadsheetId = getLogsSpreadsheetId(req) || "";
 
   const status = {
     serviceAccountConfigured: !!(email && privateKey),
     serviceAccountEmail: email,
-    spreadsheetId: spreadsheetId,
+    projectsSpreadsheetId,
+    logsSpreadsheetId,
     fetchStatus: { ok: false, error: "Not tested" },
     databaseStatus: { ok: false, error: "Not tested" }
   };
@@ -301,29 +328,29 @@ app.get("/api/config-status", async (req, res) => {
   }
 
   // Test Fetch Spreadsheet (Projects/Domains list)
-  if (isValidSpreadsheetId(spreadsheetId)) {
+  if (isValidSpreadsheetId(projectsSpreadsheetId)) {
     try {
-      const tabName = process.env.GOOGLE_PROJECTS_TAB_NAME || "Projects";
-      await fetchSheetValues(spreadsheetId, `${tabName}!A1:B2`);
+      const tabName = "Projects";
+      await fetchSheetValues(projectsSpreadsheetId, `${tabName}!A1:B2`);
       status.fetchStatus = { ok: true, error: "" };
     } catch (e: any) {
       status.fetchStatus = { ok: false, error: e.message || String(e) };
     }
   } else {
-    status.fetchStatus = { ok: false, error: "GOOGLE_SPREADSHEET_ID has placeholder value or is invalid / empty" };
+    status.fetchStatus = { ok: false, error: "Projects spreadsheet ID is invalid / empty" };
   }
 
   // Test Database Spreadsheet (Logs list)
-  if (isValidSpreadsheetId(spreadsheetId)) {
+  if (isValidSpreadsheetId(logsSpreadsheetId)) {
     try {
-      const tabName = process.env.GOOGLE_LOGS_TAB_NAME || "Logs";
-      await fetchSheetValues(spreadsheetId, `${tabName}!A1:B2`);
+      const tabName = "Logs";
+      await fetchSheetValues(logsSpreadsheetId, `${tabName}!A1:B2`);
       status.databaseStatus = { ok: true, error: "" };
     } catch (e: any) {
       status.databaseStatus = { ok: false, error: e.message || String(e) };
     }
   } else {
-    status.databaseStatus = { ok: false, error: "GOOGLE_SPREADSHEET_ID has placeholder value or is invalid / empty" };
+    status.databaseStatus = { ok: false, error: "Logs spreadsheet ID is invalid / empty" };
   }
 
   return res.json(status);
@@ -331,8 +358,8 @@ app.get("/api/config-status", async (req, res) => {
 
 // Get All Projects (Domains)
 app.get("/api/projects", async (req, res) => {
-  const spreadsheetId = getSpreadsheetId(req);
-  const tabName = process.env.GOOGLE_PROJECTS_TAB_NAME || "Projects";
+  const spreadsheetId = getProjectsSpreadsheetId(req);
+  const tabName = "Projects";
   const jwt = getSheetsJWT();
 
   if (!jwt || !isValidSpreadsheetId(spreadsheetId)) {
@@ -381,7 +408,7 @@ app.get("/api/projects", async (req, res) => {
 
     return res.json(projectsMapped);
   } catch (err: any) {
-    console.log("Failed to read projects from online spreadsheets (serving offline projects):", err?.message || err);
+    console.info("[Sheets Info] Spreadsheet connection not ready; serving offline cached projects list.");
     const fallbackProjects = JSON.parse(fs.readFileSync(PROJECTS_FALLBACK_FILE, "utf-8"));
     return res.json(fallbackProjects);
   }
@@ -389,9 +416,10 @@ app.get("/api/projects", async (req, res) => {
 
 // Get consolidated filter selections (projects, locations, regions, active team user emails)
 app.get("/api/filters", async (req, res) => {
-  const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID;
-  const projectsTab = process.env.GOOGLE_PROJECTS_TAB_NAME || "Projects";
-  const logsTab = process.env.GOOGLE_LOGS_TAB_NAME || "Logs";
+  const projectsSpreadsheetId = getProjectsSpreadsheetId(req);
+  const logsSpreadsheetId = getLogsSpreadsheetId(req);
+  const projectsTab = "Projects";
+  const logsTab = "Logs";
   const jwt = getSheetsJWT();
 
   let projectsArr: any[] = [];
@@ -399,10 +427,10 @@ app.get("/api/filters", async (req, res) => {
   const uniqueRegions = new Set<string>();
   const uniqueEmails = new Set<string>();
 
-  // 1. Load Projects List
-  if (jwt && isValidSpreadsheetId(spreadsheetId)) {
+    // 1. Load Projects List
+  if (jwt && isValidSpreadsheetId(projectsSpreadsheetId)) {
     try {
-      const pRows = await fetchSheetValues(spreadsheetId!, `${projectsTab}!A1:E500`);
+      const pRows = await fetchSheetValues(projectsSpreadsheetId!, `${projectsTab}!A1:E500`);
       if (pRows && pRows.length > 1) {
         pRows.slice(1)
           .filter((row: any) => row[0] || row[1])
@@ -432,7 +460,7 @@ app.get("/api/filters", async (req, res) => {
           });
       }
     } catch (e) {
-      console.log("Sheets projects fetch failed for filters (using local projects list):", e);
+      console.info("[Sheets Info] Projects sheet connection not ready; serving filters via local offline list.");
     }
   }
 
@@ -454,9 +482,9 @@ app.get("/api/filters", async (req, res) => {
   }
 
   // 2. Fetch submissions to capture any user email who has reported on any project
-  if (jwt && isValidSpreadsheetId(spreadsheetId)) {
+  if (jwt && isValidSpreadsheetId(logsSpreadsheetId)) {
     try {
-      const lRows = await fetchSheetValues(spreadsheetId!, `${logsTab}!A1:E2500`);
+      const lRows = await fetchSheetValues(logsSpreadsheetId!, `${logsTab}!A1:E2500`);
       if (lRows && lRows.length > 1) {
         lRows.slice(1).forEach((row: any) => {
           if (row[2]) {
@@ -465,7 +493,7 @@ app.get("/api/filters", async (req, res) => {
         });
       }
     } catch (e) {
-      console.log("Sheets logs fetch failed for filters (using local logs):", e);
+      console.info("[Sheets Info] Logs sheet connection not ready; serving filters via local offline list.");
     }
   } else {
     try {
@@ -531,8 +559,8 @@ app.post("/api/projects", (req, res) => {
 
 // Get Submissions (grouped DSR Submissions Logs)
 app.get("/api/submissions", async (req, res) => {
-  const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID;
-  const tabName = process.env.GOOGLE_LOGS_TAB_NAME || "Logs";
+  const spreadsheetId = getLogsSpreadsheetId(req);
+  const tabName = "Logs";
   const jwt = getSheetsJWT();
 
   if (!jwt || !isValidSpreadsheetId(spreadsheetId)) {
@@ -618,7 +646,7 @@ app.get("/api/submissions", async (req, res) => {
     const list = Object.values(groupedEntries).sort((a: any, b: any) => b.createdAt.localeCompare(a.createdAt));
     return res.json(list);
   } catch (err: any) {
-    console.log("Failed to fetch online logs, serving offline:", err.message || err);
+    console.info("[Sheets Info] Spreadsheet connection not ready; fetching offline cached submissions.");
     const fallbackSubmissions = JSON.parse(fs.readFileSync(SUBMISSIONS_FALLBACK_FILE, "utf-8"));
     return res.json(fallbackSubmissions);
   }
@@ -636,8 +664,8 @@ app.post("/api/submissions/append", async (req, res) => {
     return res.status(400).json({ error: "Missing required submission body fields" });
   }
 
-  const spreadsheetId = process.env.GOOGLE_SPREADSHEET_ID;
-  const tabName = process.env.GOOGLE_LOGS_TAB_NAME || "Logs";
+  const spreadsheetId = getLogsSpreadsheetId(req);
+  const tabName = "Logs";
   const jwt = getSheetsJWT();
 
   const submissionId = `dsr-${Date.now()}`;
@@ -719,8 +747,8 @@ app.post("/api/submissions/append", async (req, res) => {
       await appendSheetValues(spreadsheetId, `${tabName}!A1:S1`, rowsToWrite);
       return res.json({ success: true, source: "Google Sheets" });
     } catch (err: any) {
-      console.log("Google Sheets write failed, persisted locally offline only:", err?.message || err);
-      return res.json({ success: true, source: "In-Memory Fallback Local DB (Spreadsheets error)" });
+      console.info("[Sheets Info] Spreadsheet connection not ready; writing record to offline storage.");
+      return res.json({ success: true, source: "In-Memory Fallback Local DB (Offline mode)" });
     }
   }
 
@@ -796,4 +824,8 @@ async function startServer() {
   });
 }
 
-startServer();
+if (!process.env.VERCEL) {
+  startServer();
+}
+
+export default app;
