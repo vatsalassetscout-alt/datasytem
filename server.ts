@@ -244,20 +244,14 @@ async function ensureSheetHeaders(spreadsheetId: string, tabName: string, header
 // =========================================================================
 const ALLOWED_ADMINS = [
   "vatsalpatel1720@gmail.com",
-  "vatsal.assetscout@gmail.com",
-  "admin@dsr.com",
-  "admin@company.com",
-  "shadowff2309@gmail.com"
+
 ];
 
 const ALLOWED_USERS = [
-  "alex.rivera@company.com",
-  "employee@company.com",
-  "vatsalpatel1720@gmail.com",
+ 
+
   "vatsal.assetscout@gmail.com",
-  "admin@dsr.com",
-  "admin@company.com",
-  "shadowff2309@gmail.com"
+ 
 ];
 
 // GET allowed list configurations for synchronization
