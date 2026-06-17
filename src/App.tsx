@@ -9,6 +9,7 @@ import {
   DEFAULT_PROJECTS,
   INITIAL_DSR_ENTRIES,
   ADMIN_EMAILS,
+  DEFAULT_ALLOWED_USERS,
 } from './data';
 import DSRForm from './components/DSRForm';
 import DSRLogs from './components/DSRLogs';
@@ -44,7 +45,10 @@ export default function App() {
   // Global States (synchronized with localStorage)
   const [adminEmails, setAdminEmails] = useState<string[]>(() => {
     const saved = localStorage.getItem('dsr_admin_emails');
-    return saved ? JSON.parse(saved) : ADMIN_EMAILS;
+    const savedList: string[] = saved ? JSON.parse(saved) : [];
+    // Merge hardcoded ADMIN_EMAILS to always keep new configurations accessible
+    const merged = Array.from(new Set([...savedList, ...ADMIN_EMAILS]));
+    return merged;
   });
 
   const [projects, setProjects] = useState<Project[]>(() => {
@@ -54,7 +58,21 @@ export default function App() {
 
   const [allowedUsers, setAllowedUsers] = useState<AppUser[]>(() => {
     const saved = localStorage.getItem('dsr_allowed_users');
-    return saved ? JSON.parse(saved) : [];
+    const savedList: AppUser[] = saved ? JSON.parse(saved) : [];
+    
+    // Convert hardcoded defaults
+    const defaultUsers: AppUser[] = DEFAULT_ALLOWED_USERS.map((email) => ({
+      email,
+      name: email.includes('@') ? email.split('@')[0].charAt(0).toUpperCase() + email.split('@')[0].slice(1) : email
+    }));
+
+    // Merge by unique email key
+    const uniqueMap = new Map<string, AppUser>();
+    [...defaultUsers, ...savedList].forEach(user => {
+      uniqueMap.set(user.email.toLowerCase().trim(), user);
+    });
+    
+    return Array.from(uniqueMap.values());
   });
 
   const [projectLocations, setProjectLocations] = useState<ProjectLocation[]>(() => {

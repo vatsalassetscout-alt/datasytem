@@ -8,6 +8,16 @@ export const ADMIN_EMAILS = [
   'shadowff2309@gmail.com'
 ];
 
+export const DEFAULT_ALLOWED_USERS = [
+  'alex.rivera@company.com',
+  'employee@company.com',
+  'vatsalpatel1720@gmail.com',
+  'vatsal.assetscout@gmail.com',
+  'admin@dsr.com',
+  'admin@company.com',
+  'shadowff2309@gmail.com'
+];
+
 export const DEFAULT_PROJECTS: Project[] = [];
 
 // Seed some entries conforming to DSREntry with works list!
