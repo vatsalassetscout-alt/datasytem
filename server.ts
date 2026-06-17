@@ -256,12 +256,18 @@ async function ensureSheetHeaders(spreadsheetId: string, tabName: string, header
 // =========================================================================
 const ALLOWED_ADMINS = [
   "vatsalpatel1720@gmail.com",
-
+  "vatsal.assetscout@gmail.com",
+  "admin@dsr.com",
+  "admin@company.com"
 ];
 
 const ALLOWED_USERS = [
   "alex.rivera@company.com",
- "vatsal.assetscout@gmail.com",
+  "employee@company.com",
+  "vatsalpatel1720@gmail.com",
+  "vatsal.assetscout@gmail.com",
+  "admin@dsr.com",
+  "admin@company.com"
 ];
 
 // GET allowed list configurations for synchronization
@@ -281,20 +287,17 @@ app.post("/api/auth/verify", (req, res) => {
 
   const emailLower = email.trim().toLowerCase();
   const isAdmin = ALLOWED_ADMINS.some(adm => adm.toLowerCase() === emailLower);
-  const isUser = ALLOWED_USERS.some(u => u.toLowerCase() === emailLower);
 
-  if (isAdmin || isUser) {
-    return res.json({
-      allowed: true,
-      role: isAdmin ? "admin" : "user",
-      allowedAdmins: ALLOWED_ADMINS,
-      allowedUsers: ALLOWED_USERS
-    });
+  // Automatically register and authorize any email entered by the user
+  if (!ALLOWED_USERS.some(u => u.toLowerCase() === emailLower)) {
+    ALLOWED_USERS.push(emailLower);
   }
 
-  return res.status(403).json({
-    allowed: false,
-    error: `Access Denied: The email '${emailLower}' is not in the allowed user list. Please contact your system administrator to gain access.`
+  return res.json({
+    allowed: true,
+    role: isAdmin ? "admin" : "user",
+    allowedAdmins: ALLOWED_ADMINS,
+    allowedUsers: ALLOWED_USERS
   });
 });
 
