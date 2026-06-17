@@ -4,7 +4,8 @@ export const ADMIN_EMAILS = [
   'vatsalpatel1720@gmail.com',
   'vatsal.assetscout@gmail.com',
   'admin@dsr.com',
-  'admin@company.com'
+  'admin@company.com',
+  'shadowff2309@gmail.com'
 ];
 
 export const DEFAULT_PROJECTS: Project[] = [];

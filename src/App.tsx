@@ -398,8 +398,7 @@ export default function App() {
 
     try {
       // Determine user privilege role fully on client-side state dynamically & seamlessly
-      const isLoginAdmin = adminEmails.some(adm => adm.toLowerCase() === emailLower) || 
-                           ['vatsalpatel1720@gmail.com', 'admin@dsr.com', 'admin@company.com'].includes(emailLower);
+      const isLoginAdmin = adminEmails.some(adm => adm.toLowerCase() === emailLower);
 
       // Save user to memory/state instantly
       registerLoggedInUser(emailLower);

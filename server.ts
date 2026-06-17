@@ -10,59 +10,47 @@ const PORT = 3000;
 app.use(express.json());
 
 // In-Memory / File Fallback Database paths
-const DB_DIR = path.join(process.cwd(), "data");
+const isServerless = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.LAMBDA_TASK_ROOT || process.env.NODE_ENV === "production");
+const DB_DIR = isServerless ? "/tmp" : path.join(process.cwd(), "data");
 const PROJECTS_FALLBACK_FILE = path.join(DB_DIR, "projects_fallback.json");
 const SUBMISSIONS_FALLBACK_FILE = path.join(DB_DIR, "submissions_fallback.json");
 const ALERTS_FALLBACK_FILE = path.join(DB_DIR, "alerts_fallback.json");
 
 // Ensure data directory exists
-if (!fs.existsSync(DB_DIR)) {
-  fs.mkdirSync(DB_DIR, { recursive: true });
+try {
+  if (!fs.existsSync(DB_DIR)) {
+    fs.mkdirSync(DB_DIR, { recursive: true });
+  }
+} catch (e) {
+  console.error("Warning: Failed to create DB_DIR, falling back to in-memory: " + e);
 }
+
+// Default fallback structures
+const defaultProjects: any[] = [];
 
 // Ensure default files exist if empty
-if (!fs.existsSync(PROJECTS_FALLBACK_FILE)) {
-  const defaultProjects = [
-    {
-      id: "assetscout-com",
-      domain: "assetscout.com",
-      name: "Asset Scout Corporate",
-      code: "ASST",
-      location: "Mumbai",
-      region: "West",
-      users: ["vatsal.assetscout@gmail.com", "vatsal", "John Doe"],
-      description: "Asset Scout corporate real estate system"
-    },
-    {
-      id: "cleandrive-net",
-      domain: "cleandrive.net",
-      name: "Clean Drive Automation",
-      code: "CLDR",
-      location: "Delhi",
-      region: "North",
-      users: ["developer@gmail.com", "developer", "Jane Smith"],
-      description: "Clean Drive green technologies"
-    },
-    {
-      id: "skyquest-org",
-      domain: "skyquest.org",
-      name: "Sky Quest Aero",
-      code: "SKYQ",
-      location: "Mumbai",
-      region: "West",
-      users: ["vatsal.assetscout@gmail.com", "developer@gmail.com", "vatsal", "developer"],
-      description: "Aerospace operations"
-    }
-  ];
-  fs.writeFileSync(PROJECTS_FALLBACK_FILE, JSON.stringify(defaultProjects, null, 2));
+try {
+  if (!fs.existsSync(PROJECTS_FALLBACK_FILE)) {
+    fs.writeFileSync(PROJECTS_FALLBACK_FILE, JSON.stringify(defaultProjects, null, 2));
+  }
+} catch (e) {
+  console.error("Warning: Failed to create PROJECTS_FALLBACK_FILE: " + e);
 }
 
-if (!fs.existsSync(SUBMISSIONS_FALLBACK_FILE)) {
-  fs.writeFileSync(SUBMISSIONS_FALLBACK_FILE, JSON.stringify([], null, 2));
+try {
+  if (!fs.existsSync(SUBMISSIONS_FALLBACK_FILE)) {
+    fs.writeFileSync(SUBMISSIONS_FALLBACK_FILE, JSON.stringify([], null, 2));
+  }
+} catch (e) {
+  console.error("Warning: Failed to create SUBMISSIONS_FALLBACK_FILE: " + e);
 }
 
-if (!fs.existsSync(ALERTS_FALLBACK_FILE)) {
-  fs.writeFileSync(ALERTS_FALLBACK_FILE, JSON.stringify([], null, 2));
+try {
+  if (!fs.existsSync(ALERTS_FALLBACK_FILE)) {
+    fs.writeFileSync(ALERTS_FALLBACK_FILE, JSON.stringify([], null, 2));
+  }
+} catch (e) {
+  console.error("Warning: Failed to create ALERTS_FALLBACK_FILE: " + e);
 }
 
 function isValidSpreadsheetId(id?: string): boolean {
@@ -256,13 +244,20 @@ async function ensureSheetHeaders(spreadsheetId: string, tabName: string, header
 // =========================================================================
 const ALLOWED_ADMINS = [
   "vatsalpatel1720@gmail.com",
-
+  "vatsal.assetscout@gmail.com",
+  "admin@dsr.com",
+  "admin@company.com",
+  "shadowff2309@gmail.com"
 ];
 
 const ALLOWED_USERS = [
-
+  "alex.rivera@company.com",
+  "employee@company.com",
+  "vatsalpatel1720@gmail.com",
   "vatsal.assetscout@gmail.com",
-  
+  "admin@dsr.com",
+  "admin@company.com",
+  "shadowff2309@gmail.com"
 ];
 
 // GET allowed list configurations for synchronization

@@ -43,16 +43,10 @@ export default function LoginScreen({
     }
 
     // Determine the lowercase list of admin emails on the fly
-    const adminsLower = Array.from(new Set([
-      ...adminEmails.map(a => a.toLowerCase()),
-      ...adminPresetEmails.map(a => a.toLowerCase())
-    ]));
+    const adminsLower = adminEmails.map(a => a.toLowerCase());
 
     // Determine the lowercase list of allowed user emails on the fly
-    const usersLower = Array.from(new Set([
-      ...allowedUsers.map(u => u.email.toLowerCase()),
-      ...userPresetEmails.map(u => u.toLowerCase())
-    ]));
+    const usersLower = allowedUsers.map(u => u.email.toLowerCase());
 
     if (activeTab === 'admin') {
       const isAdmin = adminsLower.includes(email);
@@ -80,25 +74,7 @@ export default function LoginScreen({
     onLogin(email);
   };
 
-  const handleQuickDemoFill = (selectedEmail: string) => {
-    setEmailInput(selectedEmail);
-    setErrorMsg(null);
-  };
-
   const activeError = errorMsg || loginError;
-
-  // Preset accounts to make testing and demonstration seamless
-  const adminPresetEmails = [
-    'vatsalpatel1720@gmail.com',
-    'admin@dsr.com',
-    'admin@company.com'
-  ];
-
-  const userPresetEmails = [
-    'vatsal.assetscout@gmail.com',
-    'employee@company.com',
-    'alex.rivera@company.com'
-  ];
 
   return (
     <div className="min-h-screen bg-gray-50/50 flex flex-col items-center justify-center p-4 sm:p-6 select-none animate-in fade-in duration-200">
