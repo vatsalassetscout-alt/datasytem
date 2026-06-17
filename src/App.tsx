@@ -210,9 +210,17 @@ export default function App() {
     return localStorage.getItem('dsr_logged_user') || null;
   });
 
+  const [currentUserRole, setCurrentUserRole] = useState<'user' | 'admin' | null>(() => {
+    return (localStorage.getItem('dsr_logged_role') as 'user' | 'admin') || null;
+  });
+
   const [activeTab, setActiveTab] = useState<'submit' | 'logs' | 'dashboard' | 'settings'>(() => {
     const savedUser = localStorage.getItem('dsr_logged_user');
+    const savedRole = localStorage.getItem('dsr_logged_role') as 'user' | 'admin' | null;
     if (savedUser) {
+      if (savedRole) {
+        return savedRole === 'admin' ? 'dashboard' : 'submit';
+      }
       const savedAdmins = localStorage.getItem('dsr_admin_emails');
       const admins = savedAdmins ? JSON.parse(savedAdmins) : ADMIN_EMAILS;
       return admins.includes(savedUser.trim().toLowerCase()) ? 'dashboard' : 'submit';
@@ -369,11 +377,12 @@ export default function App() {
       localStorage.setItem('dsr_logged_user', currentUserEmail);
     } else {
       localStorage.removeItem('dsr_logged_user');
+      localStorage.removeItem('dsr_logged_role');
     }
   }, [currentUserEmail]);
 
   // Derived user parameters
-  const isAdmin = currentUserEmail ? adminEmails.some(adm => adm.toLowerCase() === currentUserEmail.trim().toLowerCase()) : false;
+  const isAdmin = currentUserRole === 'admin';
   
   // Filter projects by whether the user is assigned to them in the Sheets database project mapping
   const filteredProjectsForUser = useMemo(() => {
@@ -409,19 +418,18 @@ export default function App() {
   const [filteredLogsCount, setFilteredLogsCount] = useState<number | null>(null);
 
   // Actions
-  const handleLogin = async (email: string) => {
+  const handleLogin = async (email: string, role: 'user' | 'admin') => {
     const emailLower = email.trim().toLowerCase();
     setLoginValidationError(null);
     setIsLoggingIn(true);
 
     try {
-      // Determine user privilege role fully on client-side state dynamically & seamlessly
-      const isLoginAdmin = adminEmails.some(adm => adm.toLowerCase() === emailLower);
-
       // Save user to memory/state instantly
       registerLoggedInUser(emailLower);
       setCurrentUserEmail(emailLower);
-      setActiveTab(isLoginAdmin ? 'dashboard' : 'submit');
+      setCurrentUserRole(role);
+      localStorage.setItem('dsr_logged_role', role);
+      setActiveTab(role === 'admin' ? 'dashboard' : 'submit');
 
       // Attempt background backend synchronisation for active state updates without blocking login UI or crashing
       syncWithBackend().catch((err) => {
@@ -442,8 +450,10 @@ export default function App() {
       // silent catch for local logins
     }
     setCurrentUserEmail(null);
+    setCurrentUserRole(null);
     setLoginValidationError(null);
     localStorage.removeItem('dsr_logged_user');
+    localStorage.removeItem('dsr_logged_role');
   };
 
   const handleAddCustomSubmissionType = (type: CustomSubmissionType) => {
@@ -689,18 +699,20 @@ export default function App() {
                 DSR History Logs
               </button>
 
-              <button
-                id="tab-dashboard"
-                onClick={() => setActiveTab('dashboard')}
-                className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold cursor-pointer transition ${
-                  activeTab === 'dashboard'
-                    ? 'bg-indigo-50 text-indigo-700'
-                    : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'
-                }`}
-              >
-                <LayoutGrid size={14} />
-                Analytics Dashboard
-              </button>
+              {isAdmin && (
+                <button
+                  id="tab-dashboard"
+                  onClick={() => setActiveTab('dashboard')}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold cursor-pointer transition ${
+                    activeTab === 'dashboard'
+                      ? 'bg-indigo-50 text-indigo-700'
+                      : 'text-gray-500 hover:text-gray-800 hover:bg-gray-50'
+                  }`}
+                >
+                  <LayoutGrid size={14} />
+                  Analytics Dashboard
+                </button>
+              )}
 
               {isAdmin && (
                 <button
@@ -867,15 +879,17 @@ export default function App() {
             History Logs
           </button>
 
-          <button
-            onClick={() => setActiveTab('dashboard')}
-            className={`flex flex-col items-center gap-1 py-1.5 px-1 rounded-xl text-[10px] font-bold w-1/4 transition cursor-pointer ${
-              activeTab === 'dashboard' ? 'text-indigo-600 bg-indigo-50/50' : 'text-gray-400 hover:text-gray-700'
-            }`}
-          >
-            <LayoutGrid size={15} />
-            Dashboard
-          </button>
+          {isAdmin && (
+            <button
+              onClick={() => setActiveTab('dashboard')}
+              className={`flex flex-col items-center gap-1 py-1.5 px-1 rounded-xl text-[10px] font-bold w-1/4 transition cursor-pointer ${
+                activeTab === 'dashboard' ? 'text-indigo-600 bg-indigo-50/50' : 'text-gray-400 hover:text-gray-700'
+              }`}
+            >
+              <LayoutGrid size={15} />
+              Dashboard
+            </button>
+          )}
           
           {isAdmin && (
             <button

@@ -9,7 +9,7 @@ import { motion } from 'motion/react';
 import { AppUser } from '../types';
 
 interface LoginScreenProps {
-  onLogin: (email: string) => void;
+  onLogin: (email: string, role: 'user' | 'admin') => void;
   adminEmails: string[];
   allowedUsers?: AppUser[];
   onGoogleSignIn?: () => Promise<void>;
@@ -71,7 +71,7 @@ export default function LoginScreen({
       }
     }
 
-    onLogin(email);
+    onLogin(email, activeTab);
   };
 
   const activeError = errorMsg || loginError;
